@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Share Location</title>
+    <!-- Include Google Maps JavaScript API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAeBgx9JJAK5Zl_HyvFl7_pAXNqU-bYe_U&callback=initMap" async defer></script>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Location Sharing</h1>
+
+<!-- Phone number input form -->
+<form id="locationForm" onsubmit="startLocationSharing(event)">
+    <label for="phone_number">Enter Phone Number:</label>
+    <input type="text" id="phone_number" placeholder="Driver's Phone Number" required />
+    <button type="submit">Start Location Sharing</button>
+    <button type="button" id="stop_button" onclick="stopLocationSharing()" disabled>Stop Location Sharing</button>
+</form>
+
+<!-- Google Map container -->
+<div id="map"></div>
+
+<script>
+    let locationInterval = null;
+    let driverPhoneNumber = "";
+    let map = null;
+    let marker = null;
+
+    // Initialize Google Map
+    function initMap() {
+        const defaultLocation = { lat: 20.5937, lng: 78.9629 };  // Default location (India center)
+
+        map = new google.maps.Map(document.getElementById("map"), {
+            zoom: 14,
+            center: defaultLocation,
+        });
+
+        marker = new google.maps.Marker({
+            position: defaultLocation,
+            map: map,
+            title: "Driver's Location",
+        });
+    }
+
+    // Start location sharing
+    function startLocationSharing(event) {
+        event.preventDefault();
+        const phoneNumber = document.getElementById("phone_number").value.trim();
+        if (!phoneNumber) {
+            alert("Please enter a phone number.");
+            return;
+        }
+
+        driverPhoneNumber = phoneNumber;
+        document.getElementById("stop_button").disabled = false;
+
+        // Check if the phone number exists (Backend call)
+        fetch(`/check_location_sharing_status/?phone_number=${phoneNumber}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.location_sharing_active === false) {
+                    alert("Location sharing is not active for this driver.");
+                    return;
+                }
+
+                // If location sharing is active, start updating the location
+                startUpdatingLocation();
+            })
+            .catch(error => {
+                console.error("Error checking location sharing status:", error);
+                alert("Error checking phone number.");
+            });
+    }
+
+    // Get the real-time location from the browser and update Google Map
+    function startUpdatingLocation() {
+        locationInterval = setInterval(() => {
+            console.log("Requesting current location...");  // Debugging log
+
+            // Use the geolocation API to get the user's current position
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const latitude = position.coords.latitude;
+                        const longitude = position.coords.longitude;
+                        const accuracy = position.coords.accuracy;  // Get the accuracy of the location
+                        const timestamp = new Date().toISOString();  // Current timestamp in ISO format
+
+                        console.log("Latitude: " + latitude + ", Longitude: " + longitude);  // Debugging log
+                        console.log("Location Accuracy (meters): " + accuracy);  // Debugging log
+                        console.log("Timestamp: " + timestamp);  // Debugging log
+
+                        // If the accuracy is too low, warn the user
+                        if (accuracy > 100) {
+                            console.warn("Location accuracy is low. Consider moving to a more open area.");
+                        }
+
+                        // Update the map with the real-time location
+                        updateMap(latitude, longitude);
+
+                        // Send updated location to the server
+                        fetch(`/update_location/`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                phone_number: driverPhoneNumber,
+                                latitude: latitude,
+                                longitude: longitude,
+                                timestamp: timestamp,
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log("Location updated:", data);
+                        })
+                        .catch(error => {
+                            console.error("Error updating location:", error);
+                            clearInterval(locationInterval);
+                            alert("Error updating location.");
+                        });
+                    },
+                    function(error) {
+                        console.error("Error fetching location:", error);
+                        clearInterval(locationInterval);
+                        alert("Unable to fetch location. Please allow location access.");
+                    },
+                    {
+                        enableHighAccuracy: true,  // Try to get the most accurate location
+                        timeout: 10000,            // Timeout after 10 seconds if no location is found
+                        maximumAge: 0              // Don't use cached location data
+                    }
+                );
+            } else {
+                console.error("Geolocation is not supported by this browser.");
+                alert("Geolocation is not supported by this browser.");
+                clearInterval(locationInterval);
+            }
+        }, 10000);  // Update every 10 seconds
+    }
+
+    // Stop location sharing
+    function stopLocationSharing() {
+        clearInterval(locationInterval);
+        document.getElementById("stop_button").disabled = true;
+
+        fetch(`/stop_location/${driverPhoneNumber}/`, {
+            method: 'POST',
+        })
+        .then(response => response.json())
+        .then(data => {
+            alert("Location sharing stopped.");
+        })
+        .catch(error => {
+            console.error("Error stopping location sharing:", error);
+            alert("Error stopping location sharing.");
+        });
+    }
+
+    // Update map marker location with new position
+    function updateMap(latitude, longitude) {
+        const position = { lat: latitude, lng: longitude };
+        console.log("Updating map to:", position);  // Log new position
+        marker.setPosition(position);
+        map.setCenter(position);
+    }
+
+</script>
+
+</body>
+</html>
